@@ -5,21 +5,19 @@ const fs = require("fs");
 const { spawnSync } = require("child_process");
 
 const STATE_FILE = ".rpow-cli-state.json";
-const WORKERS = process.env.RPOW_WORKERS || "4";
+const WORKERS = process.env.RPOW_WORKERS || "2";
 const COUNT = process.env.RPOW_COUNT || "1";
-const RETRY_DELAY_MS = Number(process.env.RPOW_RETRY_DELAY_MS || 3000);
+const RETRY_DELAY_MS = Number(process.env.RPOW_RETRY_DELAY_MS || 10000);
 const MAX_RETRIES = Number(process.env.RPOW_MAX_RETRIES || 0);
+const BALANCE_EVERY = Number(process.env.RPOW_BALANCE_EVERY || 10); // cek balance tiap N mint
 
 // ── Inject state dari env var ──────────────────────────────────────────────
 
-// Prioritas 1: RPOW_COOKIE — cukup paste nilai cookie rpow_session saja
 if (process.env.RPOW_COOKIE) {
   const cookieVal = process.env.RPOW_COOKIE.trim();
-  // Dukung format "rpow_session=xxx" maupun nilai mentah "xxx"
   const sessionVal = cookieVal.startsWith("rpow_session=")
     ? cookieVal.slice("rpow_session=".length)
     : cookieVal;
-
   const state = {
     updated_at: new Date().toISOString(),
     cookies: { rpow_session: sessionVal },
@@ -28,10 +26,8 @@ if (process.env.RPOW_COOKIE) {
   console.log("[automine] state injected from RPOW_COOKIE");
   console.log("[automine] rpow_session length:", sessionVal.length);
 
-// Prioritas 2: RPOW_STATE_JSON — paste seluruh JSON state
 } else if (process.env.RPOW_STATE_JSON) {
   try {
-    // Validasi JSON sebelum tulis
     const parsed = JSON.parse(process.env.RPOW_STATE_JSON);
     fs.writeFileSync(STATE_FILE, JSON.stringify(parsed, null, 2));
     console.log("[automine] state injected from RPOW_STATE_JSON");
@@ -42,7 +38,6 @@ if (process.env.RPOW_COOKIE) {
   }
 
 } else {
-  // Tidak ada env var — cek apakah state file sudah ada
   if (fs.existsSync(STATE_FILE)) {
     console.log("[automine] menggunakan state file yang sudah ada");
     try {
@@ -57,6 +52,7 @@ if (process.env.RPOW_COOKIE) {
 }
 
 let attempt = 0;
+let mintCount = 0;
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [automine] ${msg}`);
@@ -66,7 +62,30 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function checkBalance() {
+  const result = spawnSync("node", ["rpow-cli.js", "me"], { encoding: "utf8" });
+  if (result.status !== 0) {
+    log("balance check failed");
+    return;
+  }
+  const output = (result.stdout + result.stderr) || "";
+  const balance = output.match(/balance_base_units=(\d+)/)?.[1];
+  const minted = output.match(/minted_base_units=(\d+)/)?.[1];
+  const daily = output.match(/daily_minted_base_units=(\d+)/)?.[1];
+  const remaining = output.match(/daily_remaining_base_units=(\d+)/)?.[1];
+
+  if (balance) {
+    const toRpow = (v) => (Number(v) / 1_000_000_000).toFixed(6);
+    log(`💰 BALANCE: ${toRpow(balance)} RPOW | minted_today: ${toRpow(daily)} RPOW | remaining_today: ${toRpow(remaining)} RPOW`);
+  } else {
+    log(`balance raw: ${output.trim()}`);
+  }
+}
+
 async function run() {
+  log("checking initial balance...");
+  checkBalance();
+
   while (true) {
     attempt++;
     log(`attempt #${attempt} — starting mine --count ${COUNT} --workers ${WORKERS}`);
@@ -78,6 +97,10 @@ async function run() {
     if (result.status === 0) {
       log("mine completed successfully, restarting loop...");
       attempt = 0;
+      mintCount++;
+      if (mintCount % BALANCE_EVERY === 0) {
+        checkBalance();
+      }
       continue;
     }
     const reason = result.signal
