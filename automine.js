@@ -5,9 +5,9 @@ const fs = require("fs");
 const { spawnSync } = require("child_process");
 
 const STATE_FILE = ".rpow-cli-state.json";
-const WORKERS = process.env.RPOW_WORKERS || "2";
+const WORKERS = process.env.RPOW_WORKERS || "4";
 const COUNT = process.env.RPOW_COUNT || "1";
-const RETRY_DELAY_MS = Number(process.env.RPOW_RETRY_DELAY_MS || 10000);
+const RETRY_DELAY_MS = Number(process.env.RPOW_RETRY_DELAY_MS || 3000);
 const MAX_RETRIES = Number(process.env.RPOW_MAX_RETRIES || 0);
 const BALANCE_EVERY = Number(process.env.RPOW_BALANCE_EVERY || 10); // cek balance tiap N mint
 
